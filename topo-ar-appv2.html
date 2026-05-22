@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>TopoAR — Τοπογραφική Επαυξημένη Πραγματικότητα</title>
+<style>
+  :root {
+    --accent: #00e5ff;
+    --accent2: #00cc55;
+    --warn: #ff9800;
+    --danger: #f44336;
+    --bg: rgba(10,20,40,0.85);
+    --glass: rgba(255,255,255,0.08);
+    --border: rgba(0,229,255,0.25);
+    --text: #e8f4ff;
+    --font: 'Space Mono', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font); background: #0a1428; color: var(--text); overflow: hidden; height: 100vh; }
+
+  /* ── AR SCENE ── */
+  a-scene { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; }
+
+  /* ── PLAN VIEW ── */
+  #planView {
+    display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: #0a1428; z-index: 5;
+  }
+  #planCanvas { width: 100%; height: 100%; touch-action: none; }
+
+  /* ── TOP BAR ── */
+  #topBar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 20;
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px;
+    background: linear-gradient(to bottom, rgba(10,20,40,0.95), transparent);
+  }
+  #gpsPill {
+    flex: 1; padding: 6px 12px; border-radius: 20px;
+    background: var(--glass); border: 1px solid var(--border);
+    font-size: 10px; cursor: pointer; transition: all .3s;
+    display: flex; align-items: center; gap: 6px;
+  }
+  #gpsPill.good { border-color: rgba(0,204,85,0.5); }
+  #gpsPill.warn { border-color: rgba(255,152,0,0.5); }
+  #gpsPill.locked { border-color: rgba(0,229,255,0.8); background: rgba(0,229,255,0.1); }
+  #gpsDot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); flex-shrink: 0; }
+  .dot-good { background: var(--accent2) !important; }
+  .dot-locked { background: var(--accent) !important; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  #viewToggle {
+    padding: 6px 14px; border-radius: 20px; font-size: 11px; font-family: var(--font);
+    background: var(--glass); border: 1px solid var(--border); color: var(--text);
+    cursor: pointer; white-space: nowrap;
+  }
+
+  /* ── BOTTOM PANEL ── */
+  #bottomPanel {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
+    background: var(--bg); border-top: 1px solid var(--border);
+    padding: 14px; backdrop-filter: blur(12px);
+    transition: transform .35s cubic-bezier(.4,0,.2,1);
+  }
+  #bottomPanel.collapsed { transform: translateY(calc(100% - 54px)); }
+
+  #panelHandle {
+    display: flex; align-items: center; justify-content: space-between;
+    cursor: pointer; padding-bottom: 10px;
+  }
+  #panelHandle h3 { font-size: 13px; color: var(--accent); letter-spacing: 1px; }
+  #handleArrow { font-size: 18px; transition: transform .3s; }
+  #bottomPanel.collapsed #handleArrow { transform: rotate(180deg); }
+
+  .row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .inp {
+    flex: 1; padding: 9px 12px; background: var(--glass); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); font-family: var(--font); font-size: 11px;
+    outline: none;
+  }
+  .inp:focus { border-color: var(--accent); }
+  .inp::placeholder { color: rgba(232,244,255,0.35); }
+
+  .modeRow { display: flex; gap: 6px; margin-bottom: 8px; }
+  .modeBtn {
+    flex: 1; padding: 7px; border-radius: 8px; font-family: var(--font); font-size: 10px;
+    border: 1px solid var(--border); background: var(--glass); color: var(--text);
+    cursor: pointer; transition: all .2s; text-align: center;
+  }
+  .modeBtn.active { background: rgba(0,229,255,0.15); border-color: var(--accent); color: var(--accent); }
+
+  .btnRow { display: flex; gap: 8px; }
+  .btn {
+    flex: 1; padding: 10px; border-radius: 10px; font-family: var(--font); font-size: 11px;
+    border: none; cursor: pointer; transition: all .2s; font-weight: bold; letter-spacing: .5px;
+  }
+  .btn-primary { background: linear-gradient(135deg, #0088cc, #00e5ff); color: #000; }
+  .btn-danger  { background: linear-gradient(135deg, #cc2200, #f44336); color: #fff; }
+  .btn-success { background: linear-gradient(135deg, #007733, #00cc55); color: #fff; }
+  .btn:active { transform: scale(.96); }
+
+  /* ── POINT LIST ── */
+  #ptList { max-height: 120px; overflow-y: auto; margin: 8px 0; }
+  .ptItem {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 10px; margin-bottom: 4px; border-radius: 8px;
+    background: var(--glass); border: 1px solid var(--border); font-size: 10px;
+  }
+  .ptItem-label { color: var(--accent); font-weight: bold; margin-right: 6px; }
+  .ptItem-coords { color: rgba(232,244,255,.6); flex: 1; }
+  .ptDel { background: none; border: none; color: var(--danger); cursor: pointer; font-size: 14px; padding: 0 4px; }
+
+  /* ── MODAL ── */
+  #modal {
+    display: none; position: fixed; inset: 0; z-index: 50;
+    background: rgba(0,0,0,0.7); align-items: center; justify-content: center;
+  }
+  #modal.show { display: flex; }
+  #modalBox {
+    background: #0d1f3c; border: 1px solid var(--border); border-radius: 16px;
+    padding: 24px; width: 90%; max-width: 380px; backdrop-filter: blur(20px);
+  }
+  #modalBox h2 { color: var(--accent); font-size: 14px; margin-bottom: 16px; letter-spacing: 1px; }
+  #modalContent p { font-size: 11px; margin-bottom: 8px; line-height: 1.6; }
+  #modalContent .stat { color: var(--accent2); font-size: 13px; font-weight: bold; }
+  #modalClose { margin-top: 16px; width: 100%; }
+
+  /* ── TOAST ── */
+  #toast {
+    position: fixed; top: 70px; left: 50%; transform: translateX(-50%);
+    padding: 8px 18px; border-radius: 20px; font-size: 11px; z-index: 60;
+    background: rgba(0,229,255,0.15); border: 1px solid var(--accent);
+    opacity: 0; transition: opacity .3s; pointer-events: none; white-space: nowrap;
+  }
+  #toast.err { background: rgba(244,67,54,0.2); border-color: var(--danger); }
+  #toast.show { opacity: 1; }
+
+  /* ── LOADING ── */
+  #loading {
+    position: fixed; inset: 0; z-index: 100; background: #0a1428;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+  }
+  #loading h1 { font-size: 22px; color: var(--accent); letter-spacing: 3px; }
+  #loading p  { font-size: 11px; color: rgba(232,244,255,.5); text-align: center; max-width: 280px; line-height: 1.7; }
+  .spinner { width: 40px; height: 40px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #startBtn { display: none; }
+  #startBtn.show { display: block; }
+</style>
+</head>
+<body>
+
+<!-- ── LOADING SCREEN ── -->
+<div id="loading">
+  <h1>⬡ TOPOAR</h1>
+  <div class="spinner" id="spinner"></div>
+  <p id="loadMsg">Φόρτωση βιβλιοθηκών AR…<br>Παρακαλώ περιμένετε</p>
+  <button class="btn btn-primary" id="startBtn" onclick="initAR()" style="padding:12px 32px;border-radius:12px;font-family:var(--font);font-size:13px;border:none;cursor:pointer;">
+    ▶ ΕΚΚΙΝΗΣΗ AR
+  </button>
+</div>
+
+<!-- ── TOP BAR ── -->
+<div id="topBar">
+  <div id="gpsPill" class="warn" onclick="toggleLock()" title="Αγγίξτε για lock/unlock GPS">
+    <div id="gpsDot"></div>
+    <span id="gpsText">GPS: αναμονή…</span>
+  </div>
+  <button id="viewToggle" onclick="toggleView()">🗺 PLAN</button>
+</div>
+
+<!-- ── PLAN VIEW CANVAS ── -->
+<div id="planView">
+  <canvas id="planCanvas"></canvas>
+</div>
+
+<!-- ── AR SCENE (will be injected after libs load) ── -->
+<div id="arContainer"></div>
+
+<!-- ── BOTTOM PANEL ── -->
+<div id="bottomPanel" class="collapsed">
+  <div id="panelHandle" onclick="togglePanel()">
+    <h3>⬡ TOPOAR — ΕΙΣΑΓΩΓΗ ΣΗΜΕΙΟΥ</h3>
+    <span id="handleArrow">▲</span>
+  </div>
+
+  <div class="modeRow">
+    <button class="modeBtn active" id="btnEGSA" onclick="setMode('egsa')">ΕΓΣΑ87 (X, Y)</button>
+    <button class="modeBtn" id="btnWGS"  onclick="setMode('wgs')">WGS84 (Lat, Lon)</button>
+  </div>
+
+  <div id="inputEGSA">
+    <div class="row">
+      <input class="inp" id="ex" type="number" placeholder="X — Easting π.χ. 412500" step="0.001">
+      <input class="inp" id="ey" type="number" placeholder="Y — Northing π.χ. 4208300" step="0.001">
+    </div>
+  </div>
+  <div id="inputWGS" style="display:none">
+    <div class="row">
+      <input class="inp" id="wlat" type="number" placeholder="Γεωγρ. Πλάτος π.χ. 37.9838" step="0.000001">
+      <input class="inp" id="wlon" type="number" placeholder="Γεωγρ. Μήκος π.χ. 23.7275" step="0.000001">
+    </div>
+  </div>
+  <div class="row">
+    <input class="inp" id="ptName" type="text" placeholder="Όνομα σημείου π.χ. Α1" style="flex:1">
+    <input class="inp" id="ptInfo" type="text" placeholder="Πληροφορία (προαιρετικό)" style="flex:2">
+  </div>
+
+  <div id="ptList"></div>
+
+  <div class="btnRow">
+    <button class="btn btn-primary" onclick="spawnPoint()">＋ ΣΗΜΕΙΟ</button>
+    <button class="btn btn-success" onclick="showStats()">📐 ΕΜΒΑΔΟ</button>
+    <button class="btn btn-danger"  onclick="clearAll()">✕ ΟΛΑ</button>
+  </div>
+</div>
+
+<!-- ── MODAL ── -->
+<div id="modal">
+  <div id="modalBox">
+    <h2>📐 ΣΤΑΤΙΣΤΙΚΑ ΠΟΛΥΓΩΝΟΥ</h2>
+    <div id="modalContent"></div>
+    <button class="btn btn-primary" id="modalClose" onclick="closeModal()">ΚΛΕΙΣΙΜΟ</button>
+  </div>
+</div>
+
+<!-- ── TOAST ── -->
+<div id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════════════════════════
+// PROJ4 (inline minimal — EGSA87 ↔ WGS84)
+// ══════════════════════════════════════════════════════════════
+// We embed a tiny proj4 alternative for EGSA87 ↔ WGS84
+// using the 7-parameter Helmert transformation + TM projection
+const DEG = Math.PI / 180;
+const RAD = 180 / Math.PI;
+
+// GRS80 ellipsoid
+const a = 6378137.0, f = 1/298.257222101;
+const b_ell = a*(1-f), e2 = 2*f - f*f;
+const e_p2 = e2/(1-e2);
+
+// EGSA87 TM params
+const lon0 = 24*DEG, k0 = 0.9996, FE = 500000, FN = 0;
+
+// Helmert shift WGS84 → EGSA87 reference (approximate, sufficient for ~1m)
+// towgs84 = -199.87, 74.79, 246.62 (shifts from EGSA87 datum to WGS84)
+const TX=-(-199.87), TY=-(74.79), TZ=-(246.62); // reverse: WGS84→EGSA87
+
+function wgs84ToGeocentric(lat,lon,h=0){
+  const phi=lat*DEG, lam=lon*DEG;
+  const N = a/Math.sqrt(1-e2*Math.sin(phi)**2);
+  return [(N+h)*Math.cos(phi)*Math.cos(lam),(N+h)*Math.cos(phi)*Math.sin(lam),(N*(1-e2)+h)*Math.sin(phi)];
+}
+function geocentricToLLH(X,Y,Z){
+  const p=Math.sqrt(X*X+Y*Y), lon=Math.atan2(Y,X);
+  let lat=Math.atan2(Z,p*(1-e2));
+  for(let i=0;i<10;i++){const N=a/Math.sqrt(1-e2*Math.sin(lat)**2);lat=Math.atan2(Z+e2*N*Math.sin(lat),p);}
+  return [lat*RAD,lon*RAD];
+}
+function egsa87ToWGS84(X,Y){
+  // TM inverse → lat/lon on EGSA87 datum
+  const x=X-FE, y=Y-FN;
+  const M=y/k0;
+  const mu=M/(a*(1-(e2/4)-(3*e2*e2/64)-(5*e2*e2*e2/256)));
+  const e1=(1-Math.sqrt(1-e2))/(1+Math.sqrt(1-e2));
+  const ph1=mu+(3*e1/2-27*e1**3/32)*Math.sin(2*mu)+(21*e1**2/16-55*e1**4/32)*Math.sin(4*mu)+(151*e1**3/96)*Math.sin(6*mu);
+  const N1=a/Math.sqrt(1-e2*Math.sin(ph1)**2);
+  const T1=Math.tan(ph1)**2, C1=e_p2*Math.cos(ph1)**2, R1=a*(1-e2)/Math.pow(1-e2*Math.sin(ph1)**2,1.5);
+  const D=x/(N1*k0);
+  const lat=(ph1-(N1*Math.tan(ph1)/R1)*(D*D/2-(5+3*T1+10*C1-4*C1*C1-9*e_p2)*D**4/24+(61+90*T1+298*C1+45*T1*T1-252*e_p2-3*C1*C1)*D**6/720))*RAD;
+  const lon=(lon0+(D-(1+2*T1+C1)*D**3/6+(5-2*C1+28*T1-3*C1*C1+8*e_p2+24*T1*T1)*D**5/120)/Math.cos(ph1))*RAD;
+  // Apply Helmert shift (approximate)
+  const [gx,gy,gz]=wgs84ToGeocentric(lat,lon);
+  return geocentricToLLH(gx+TX,gy+TY,gz+TZ);
+}
+function wgs84ToEGSA87(lat,lon){
+  // Helmert shift WGS84 → EGSA87 datum
+  const [gx,gy,gz]=wgs84ToGeocentric(lat,lon);
+  const [la,lo]=geocentricToLLH(gx-TX,gy-TY,gz-TZ);
+  const phi=la*DEG, lam=lo*DEG;
+  const N=a/Math.sqrt(1-e2*Math.sin(phi)**2);
+  const T=Math.tan(phi)**2, C=e_p2*Math.cos(phi)**2, A_=Math.cos(phi)*(lam-lon0);
+  const M=a*((1-e2/4-3*e2*e2/64-5*e2**3/256)*phi-(3*e2/8+3*e2*e2/32+45*e2**3/1024)*Math.sin(2*phi)+(15*e2*e2/256+45*e2**3/1024)*Math.sin(4*phi)-(35*e2**3/3072)*Math.sin(6*phi));
+  const eX=k0*N*(A_+(1-T+C)*A_**3/6+(5-18*T+T*T+72*C-58*e_p2)*A_**5/120)+FE;
+  const eY=k0*(M+N*Math.tan(phi)*(A_*A_/2+(5-T+9*C+4*C*C)*A_**4/24+(61-58*T+T*T+600*C-330*e_p2)*A_**6/720))+FN;
+  return [eX,eY];
+}
+
+// ══════════════════════════════════════════════════════════════
+// KALMAN FILTER
+// ══════════════════════════════════════════════════════════════
+class Kalman1D {
+  constructor(Q=3e-5,R=0.01){this.Q=Q;this.R=R;this.P=1;this.x=null;}
+  update(z,sigmaR){
+    const R=sigmaR!=null?sigmaR*sigmaR:this.R;
+    if(this.x===null){this.x=z;return z;}
+    this.P+=this.Q;
+    const K=this.P/(this.P+R);
+    this.x+=K*(z-this.x);
+    this.P=(1-K)*this.P;
+    return this.x;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════════════════
+const S={
+  points:[],          // {lat,lon,name,info,egX,egY,el}
+  coordMode:'egsa',
+  panelOpen:false,
+  viewMode:'ar',
+  deviceLat:null, deviceLon:null, deviceAcc:999,
+  gpsLocked:false, anchorLat:null, anchorLon:null,
+  kLat:new Kalman1D(), kLon:new Kalman1D(),
+  libsLoaded:false,
+  planDrag:false, planLastX:0, planLastY:0,
+  planOffX:0, planOffY:0, planZoom:1,
+  watchId:null
+};
+let arScene=null;
+
+// ══════════════════════════════════════════════════════════════
+// LOAD AR LIBS
+// ══════════════════════════════════════════════════════════════
+function loadScript(src){
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src=src; s.onload=res; s.onerror=rej;
+    document.head.appendChild(s);
+  });
+}
+
+async function bootLibs(){
+  const msg=document.getElementById('loadMsg');
+  try{
+    msg.textContent='Φόρτωση A-Frame…';
+    await loadScript('https://cdnjs.cloudflare.com/ajax/libs/aframe/1.4.0/aframe.min.js');
+    msg.textContent='Φόρτωση AR.js…';
+    await loadScript('https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js');
+    S.libsLoaded=true;
+    msg.innerHTML='Βιβλιοθήκες φορτώθηκαν!<br>Πατήστε για εκκίνηση AR.';
+    document.getElementById('spinner').style.display='none';
+    document.getElementById('startBtn').classList.add('show');
+  } catch(e) {
+    msg.innerHTML='⚠ Αδυναμία φόρτωσης AR.<br>Ελέγξτε σύνδεση internet.<br>Λειτουργεί σε Plan View.';
+    document.getElementById('spinner').style.display='none';
+    document.getElementById('startBtn').classList.add('show');
+    document.getElementById('startBtn').textContent='▶ ΕΝΑΡΞΗ (Plan μόνο)';
+  }
+}
+
+function initAR(){
+  document.getElementById('loading').style.display='none';
+  if(S.libsLoaded) buildARScene();
+  startGPS();
+  document.getElementById('bottomPanel').classList.remove('collapsed');
+  S.panelOpen=true;
+}
+
+function buildARScene(){
+  const c=document.getElementById('arContainer');
+  c.innerHTML=`
+    <a-scene id="arScene" embedded vr-mode-ui="enabled:false"
+      arjs="sourceType:webcam;videoTexture:true;debugUIEnabled:false;"
+      renderer="logarithmicDepthBuffer:true;colorManagement:false;"
+      loading-screen="dotsColor:#00e5ff;backgroundColor:#0a1428">
+      <a-camera id="arCamera" gps-camera look-controls-enabled="false"
+        arjs-device-orientation-controls="smoothingFactor:0.1"></a-camera>
+    </a-scene>`;
+  arScene=document.getElementById('arScene');
+}
+
+// ══════════════════════════════════════════════════════════════
+// GPS
+// ══════════════════════════════════════════════════════════════
+function startGPS(){
+  if(!navigator.geolocation){toast('GPS μη διαθέσιμο',true);return;}
+  S.watchId=navigator.geolocation.watchPosition(onGPS, onGPSErr,
+    {enableHighAccuracy:true,timeout:15000,maximumAge:2000});
+}
+function onGPS(pos){
+  const {latitude,longitude,accuracy}=pos.coords;
+  const fLat=S.kLat.update(latitude, accuracy);
+  const fLon=S.kLon.update(longitude, accuracy);
+  const fAcc=Math.max(accuracy*0.5, 1);
+  S.deviceLat=fLat; S.deviceLon=fLon; S.deviceAcc=fAcc;
+  if(!S.gpsLocked && fAcc<=5){
+    S.gpsLocked=true; S.anchorLat=fLat; S.anchorLon=fLon;
+  }
+  updateGPSPill(fAcc);
+  if(S.viewMode==='plan') drawPlan();
+}
+function onGPSErr(e){
+  document.getElementById('gpsText').textContent='GPS: σφάλμα';
+}
+function updateGPSPill(acc){
+  const pill=document.getElementById('gpsPill');
+  const dot=document.getElementById('gpsDot');
+  const txt=document.getElementById('gpsText');
+  if(S.gpsLocked){
+    pill.className='gpsPill locked';
+    dot.className='dot-locked';
+    txt.textContent=`GPS 🔒 ±${acc.toFixed(1)}m`;
+  } else if(acc<15){
+    pill.className='gpsPill good';
+    dot.className='dot-good';
+    txt.textContent=`GPS ±${acc.toFixed(1)}m`;
+  } else {
+    pill.className='gpsPill warn';
+    dot.className='';
+    txt.textContent=`GPS ⚠ ±${acc.toFixed(0)}m`;
+  }
+}
+function toggleLock(){
+  S.gpsLocked=!S.gpsLocked;
+  if(S.gpsLocked && S.deviceLat){
+    S.anchorLat=S.deviceLat; S.anchorLon=S.deviceLon;
+    toast('GPS κλειδωμένο 🔒');
+  } else toast('GPS ξεκλειδωμένο 🔓');
+}
+
+// ══════════════════════════════════════════════════════════════
+// SPAWN POINT
+// ══════════════════════════════════════════════════════════════
+function spawnPoint(){
+  let lat,lon,egX,egY;
+  const name=document.getElementById('ptName').value.trim()||`Α${S.points.length+1}`;
+  const info=document.getElementById('ptInfo').value.trim()||'';
+  if(S.coordMode==='egsa'){
+    egX=parseFloat(document.getElementById('ex').value);
+    egY=parseFloat(document.getElementById('ey').value);
+    if(isNaN(egX)||isNaN(egY)){toast('Εισάγετε X και Y',true);return;}
+    if(egX<90000||egX>950000||egY<3800000||egY>4700000){
+      toast('⚠ Συντεταγμένες εκτός Ελλάδας',true);return;
+    }
+    const wgs=egsa87ToWGS84(egX,egY);
+    lat=wgs[0]; lon=wgs[1];
+  } else {
+    lat=parseFloat(document.getElementById('wlat').value);
+    lon=parseFloat(document.getElementById('wlon').value);
+    if(isNaN(lat)||isNaN(lon)){toast('Εισάγετε Lat και Lon',true);return;}
+    const eg=wgs84ToEGSA87(lat,lon);
+    egX=eg[0]; egY=eg[1];
+  }
+  const idx=S.points.length;
+  const pt={lat,lon,name,info,egX,egY,el:null};
+  S.points.push(pt);
+  if(S.libsLoaded && arScene) pt.el=spawnAREntity(lat,lon,name,info,idx);
+  addPtListItem(pt,idx);
+  updateLines();
+  toast(`Σημείο ${name} προστέθηκε ✓`);
+  document.getElementById('ptName').value='';
+  document.getElementById('ptInfo').value='';
+  if(S.viewMode==='plan') drawPlan();
+}
+
+function spawnAREntity(lat,lon,name,info,idx){
+  if(!arScene) return null;
+  const root=document.createElement('a-entity');
+  root.setAttribute('gps-entity-place',`latitude:${lat};longitude:${lon}`);
+  root.setAttribute('look-at','[gps-camera]');
+
+  // Shaft
+  const shaft=document.createElement('a-cylinder');
+  shaft.setAttribute('height','1.1'); shaft.setAttribute('radius','0.03');
+  shaft.setAttribute('color','#00e5ff'); shaft.setAttribute('position','0 0.55 0');
+  shaft.setAttribute('opacity','0.9');
+
+  // Head sphere
+  const head=document.createElement('a-sphere');
+  head.setAttribute('radius','0.10'); head.setAttribute('color','#00e5ff');
+  head.setAttribute('position','0 1.15 0'); head.setAttribute('opacity','1');
+
+  // Ring
+  const ring=document.createElement('a-torus');
+  ring.setAttribute('radius','0.22'); ring.setAttribute('radius-tubular','0.015');
+  ring.setAttribute('color','#00cc55'); ring.setAttribute('position','0 0.02 0');
+  ring.setAttribute('rotation','90 0 0');
+
+  // Label plane
+  const label=document.createElement('a-plane');
+  label.setAttribute('width','1.8'); label.setAttribute('height','0.55');
+  label.setAttribute('position','0 1.85 0'); label.setAttribute('opacity','0.88');
+  label.setAttribute('color','#0d1f3c');
+
+  const txt=document.createElement('a-text');
+  txt.setAttribute('value', name+(info?`\n${info}`:'')
+    +`\nLat:${lat.toFixed(6)}\nLon:${lon.toFixed(6)}`);
+  txt.setAttribute('align','center'); txt.setAttribute('color','#00e5ff');
+  txt.setAttribute('width','1.6'); txt.setAttribute('position','0 1.85 0.01');
+  txt.setAttribute('wrap-count','22');
+
+  label.appendChild(txt);
+  [shaft,head,ring,label].forEach(c=>root.appendChild(c));
+  arScene.appendChild(root);
+  return root;
+}
+
+// Lines between points
+let lineEls=[];
+function updateLines(){
+  lineEls.forEach(e=>e.parentNode&&e.parentNode.removeChild(e));
+  lineEls=[];
+  if(!arScene||S.points.length<2) return;
+  for(let i=0;i<S.points.length;i++){
+    const a=S.points[i], b=S.points[(i+1)%S.points.length];
+    if(i===S.points.length-1&&S.points.length<3) continue;
+    const line=document.createElement('a-entity');
+    line.setAttribute('gps-entity-place',`latitude:${a.lat};longitude:${a.lon}`);
+    const {dx,dz}=arOffset(a.lat,a.lon,b.lat,b.lon);
+    line.setAttribute('line',`start:0 0.05 0;end:${dx} 0.05 ${dz};color:#00cc55;opacity:0.8`);
+    arScene.appendChild(line);
+    lineEls.push(line);
+  }
+}
+
+function arOffset(la1,lo1,la2,lo2){
+  const R=6371000,toR=Math.PI/180;
+  const lm=((la1+la2)/2)*toR;
+  return {dx:(lo2-lo1)*toR*Math.cos(lm)*R, dz:-(la2-la1)*toR*R};
+}
+
+// ══════════════════════════════════════════════════════════════
+// POINT LIST
+// ══════════════════════════════════════════════════════════════
+function addPtListItem(pt,idx){
+  const div=document.createElement('div');
+  div.className='ptItem'; div.id=`ptItem_${idx}`;
+  div.innerHTML=`<span class="ptItem-label">${pt.name}</span>
+    <span class="ptItem-coords">${pt.egX.toFixed(1)}, ${pt.egY.toFixed(1)}</span>
+    <button class="ptDel" onclick="deletePoint(${idx})">✕</button>`;
+  document.getElementById('ptList').appendChild(div);
+}
+function deletePoint(idx){
+  const pt=S.points[idx];
+  if(pt.el&&pt.el.parentNode) pt.el.parentNode.removeChild(pt.el);
+  S.points.splice(idx,1);
+  rebuildPtList();
+  updateLines();
+  if(S.viewMode==='plan') drawPlan();
+  toast('Σημείο διαγράφηκε');
+}
+function rebuildPtList(){
+  document.getElementById('ptList').innerHTML='';
+  S.points.forEach((p,i)=>addPtListItem(p,i));
+}
+function clearAll(){
+  S.points.forEach(p=>{if(p.el&&p.el.parentNode)p.el.parentNode.removeChild(p.el);});
+  lineEls.forEach(e=>e.parentNode&&e.parentNode.removeChild(e));
+  lineEls=[]; S.points=[];
+  document.getElementById('ptList').innerHTML='';
+  if(S.viewMode==='plan') drawPlan();
+  toast('Όλα τα σημεία διαγράφηκαν');
+}
+
+// ══════════════════════════════════════════════════════════════
+// AREA CALCULATION
+// ══════════════════════════════════════════════════════════════
+function polygonAreaM2(){
+  if(S.points.length<3) return 0;
+  const pts=S.points;
+  let area=0;
+  const n=pts.length;
+  for(let i=0;i<n;i++){
+    const j=(i+1)%n;
+    area+=pts[i].egX*pts[j].egY;
+    area-=pts[j].egX*pts[i].egY;
+  }
+  return Math.abs(area)/2;
+}
+function totalPerimeterM(){
+  if(S.points.length<2) return 0;
+  let p=0;
+  for(let i=0;i<S.points.length;i++){
+    const a=S.points[i], b=S.points[(i+1)%S.points.length];
+    const dx=a.egX-b.egX, dy=a.egY-b.egY;
+    p+=Math.sqrt(dx*dx+dy*dy);
+  }
+  return p;
+}
+function distBetween(i,j){
+  const a=S.points[i],b=S.points[j];
+  const dx=a.egX-b.egX, dy=a.egY-b.egY;
+  return Math.sqrt(dx*dx+dy*dy);
+}
+
+function showStats(){
+  if(S.points.length<2){toast('Χρειάζονται τουλάχιστον 2 σημεία',true);return;}
+  const area=polygonAreaM2();
+  const perim=totalPerimeterM();
+  let distHtml='';
+  for(let i=0;i<S.points.length;i++){
+    const j=(i+1)%S.points.length;
+    if(i===S.points.length-1&&S.points.length<3) continue;
+    distHtml+=`<p>${S.points[i].name} → ${S.points[j].name}: <span class="stat">${distBetween(i,j).toFixed(2)} m</span></p>`;
+  }
+  document.getElementById('modalContent').innerHTML=`
+    ${S.points.length>=3?`
+    <p>Εμβαδό: <span class="stat">${area.toFixed(2)} m²</span></p>
+    <p>Εμβαδό: <span class="stat">${(area/10000).toFixed(4)} εκτάρια</span></p>
+    <p>Εμβαδό: <span class="stat">${(area/1000).toFixed(3)} στρέμματα</span></p>
+    <hr style="border-color:var(--border);margin:10px 0">
+    `:''}
+    <p>Περίμετρος: <span class="stat">${perim.toFixed(2)} m</span></p>
+    <hr style="border-color:var(--border);margin:10px 0">
+    ${distHtml}
+    <hr style="border-color:var(--border);margin:10px 0">
+    <p>Αριθμός σημείων: <span class="stat">${S.points.length}</span></p>
+  `;
+  document.getElementById('modal').classList.add('show');
+}
+function closeModal(){document.getElementById('modal').classList.remove('show');}
+
+// ══════════════════════════════════════════════════════════════
+// PLAN VIEW
+// ══════════════════════════════════════════════════════════════
+function toggleView(){
+  const pv=document.getElementById('planView');
+  const btn=document.getElementById('viewToggle');
+  if(S.viewMode==='ar'){
+    S.viewMode='plan'; pv.style.display='block';
+    btn.textContent='📷 AR';
+    setupPlanCanvas();
+    drawPlan();
+  } else {
+    S.viewMode='ar'; pv.style.display='none';
+    btn.textContent='🗺 PLAN';
+  }
+}
+
+function setupPlanCanvas(){
+  const cv=document.getElementById('planCanvas');
+  cv.width=cv.offsetWidth; cv.height=cv.offsetHeight;
+  // Touch pan/zoom
+  cv.ontouchstart=e=>{
+    if(e.touches.length===1){S.planDrag=true;S.planLastX=e.touches[0].clientX;S.planLastY=e.touches[0].clientY;}
+    else if(e.touches.length===2) S.pinchDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+  };
+  cv.ontouchmove=e=>{
+    e.preventDefault();
+    if(e.touches.length===1&&S.planDrag){
+      S.planOffX+=e.touches[0].clientX-S.planLastX;
+      S.planOffY+=e.touches[0].clientY-S.planLastY;
+      S.planLastX=e.touches[0].clientX; S.planLastY=e.touches[0].clientY;
+      drawPlan();
+    } else if(e.touches.length===2){
+      const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+      S.planZoom*=d/S.pinchDist; S.pinchDist=d;
+      S.planZoom=Math.max(0.2,Math.min(50,S.planZoom));
+      drawPlan();
+    }
+  };
+  cv.ontouchend=e=>{if(e.touches.length===0)S.planDrag=false;};
+  cv.onwheel=e=>{S.planZoom*=e.deltaY<0?1.1:0.9;S.planZoom=Math.max(0.2,Math.min(50,S.planZoom));drawPlan();};
+}
+
+function drawPlan(){
+  const cv=document.getElementById('planCanvas');
+  const ctx=cv.getContext('2d');
+  const W=cv.width, H=cv.height;
+  ctx.clearRect(0,0,W,H);
+
+  // Background
+  ctx.fillStyle='#0a1428'; ctx.fillRect(0,0,W,H);
+
+  // Grid
+  ctx.strokeStyle='rgba(0,229,255,0.07)'; ctx.lineWidth=1;
+  const gs=40*S.planZoom;
+  for(let x=(S.planOffX%gs+W)%gs;x<W;x+=gs){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=(S.planOffY%gs+H)%gs;y<H;y+=gs){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+
+  if(S.points.length===0){
+    ctx.fillStyle='rgba(0,229,255,0.25)'; ctx.font='14px monospace';
+    ctx.textAlign='center';
+    ctx.fillText('Δεν υπάρχουν σημεία',W/2,H/2);
+    return;
+  }
+
+  // Compute bounding box in EGSA87
+  const xs=S.points.map(p=>p.egX), ys=S.points.map(p=>p.egY);
+  const minX=Math.min(...xs), maxX=Math.max(...xs);
+  const minY=Math.min(...ys), maxY=Math.max(...ys);
+  const rngX=maxX-minX||1, rngY=maxY-minY||1;
+  const pad=70;
+  const scaleBase=Math.min((W-pad*2)/rngX,(H-pad*2)/rngY);
+  const sc=scaleBase*S.planZoom;
+
+  const toScreen=p=>[
+    (p.egX-minX)*sc + (W-(maxX-minX)*sc)/2 + S.planOffX,
+    H - ((p.egY-minY)*sc + (H-(maxY-minY)*sc)/2) - S.planOffY
+  ];
+
+  // Polygon fill
+  if(S.points.length>=3){
+    ctx.beginPath();
+    S.points.forEach((p,i)=>{
+      const [sx,sy]=toScreen(p);
+      i===0?ctx.moveTo(sx,sy):ctx.lineTo(sx,sy);
+    });
+    ctx.closePath();
+    ctx.fillStyle='rgba(0,204,85,0.15)';ctx.fill();
+    ctx.strokeStyle='rgba(0,204,85,0.7)';ctx.lineWidth=2;ctx.stroke();
+  }
+
+  // Lines
+  if(S.points.length>=2){
+    for(let i=0;i<S.points.length-1;i++){
+      const [ax,ay]=toScreen(S.points[i]), [bx,by]=toScreen(S.points[i+1]);
+      ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);
+      ctx.strokeStyle='rgba(0,229,255,0.6)';ctx.lineWidth=1.5;ctx.stroke();
+      // Distance label
+      const dist=distBetween(i,i+1);
+      ctx.fillStyle='rgba(232,244,255,0.7)';ctx.font=`${Math.max(9,11*S.planZoom)}px monospace`;
+      ctx.textAlign='center';
+      ctx.fillText(`${dist.toFixed(1)}m`,(ax+bx)/2,(ay+by)/2-6);
+    }
+  }
+
+  // Points
+  S.points.forEach((p,i)=>{
+    const [sx,sy]=toScreen(p);
+    const r=Math.max(5,8*S.planZoom);
+    ctx.beginPath();ctx.arc(sx,sy,r,0,Math.PI*2);
+    ctx.fillStyle='#00e5ff';ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+    ctx.fillStyle='#e8f4ff';ctx.font=`bold ${Math.max(10,12*S.planZoom)}px monospace`;
+    ctx.textAlign='center';ctx.fillText(p.name,sx,sy-r-4);
+    ctx.font=`${Math.max(8,9*S.planZoom)}px monospace`;
+    ctx.fillStyle='rgba(232,244,255,0.5)';
+    ctx.fillText(`(${p.egX.toFixed(0)},${p.egY.toFixed(0)})`,sx,sy+r+12);
+  });
+
+  // Device position
+  if(S.deviceLat&&S.deviceLon&&S.points.length>0){
+    const eg=wgs84ToEGSA87(S.deviceLat,S.deviceLon);
+    const px=(eg[0]-minX)*sc+(W-(maxX-minX)*sc)/2+S.planOffX;
+    const py=H-((eg[1]-minY)*sc+(H-(maxY-minY)*sc)/2)-S.planOffY;
+    ctx.beginPath();ctx.arc(px,py,8,0,Math.PI*2);
+    ctx.fillStyle='rgba(255,152,0,0.9)';ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+    ctx.fillStyle='#ff9800';ctx.font='10px monospace';ctx.textAlign='center';
+    ctx.fillText('📍 ΕΔΩ',px,py-14);
+  }
+
+  // North arrow
+  ctx.save();ctx.translate(W-40,50);
+  ctx.strokeStyle='rgba(0,229,255,0.8)';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(0,15);ctx.lineTo(0,-15);ctx.stroke();
+  ctx.fillStyle='rgba(0,229,255,0.9)';
+  ctx.beginPath();ctx.moveTo(0,-15);ctx.lineTo(-6,0);ctx.lineTo(6,0);ctx.closePath();ctx.fill();
+  ctx.fillStyle='rgba(232,244,255,0.6)';ctx.font='10px monospace';ctx.textAlign='center';
+  ctx.fillText('N',0,28);ctx.restore();
+
+  // Scale bar
+  const barLen=100;
+  const realM=barLen/sc;
+  ctx.strokeStyle='rgba(0,229,255,0.7)';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(20,H-20);ctx.lineTo(20+barLen,H-20);ctx.stroke();
+  ctx.fillStyle='rgba(232,244,255,0.7)';ctx.font='10px monospace';ctx.textAlign='left';
+  ctx.fillText(`${realM.toFixed(realM<10?1:0)} m`,20,H-28);
+
+  // Area in corner
+  if(S.points.length>=3){
+    const area=polygonAreaM2();
+    ctx.fillStyle='rgba(0,204,85,0.8)';ctx.font='bold 12px monospace';ctx.textAlign='left';
+    ctx.fillText(`Εμβαδό: ${area.toFixed(1)} m²`,12,20);
+    ctx.font='10px monospace';
+    ctx.fillText(`= ${(area/1000).toFixed(3)} στρ.`,12,34);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// UI HELPERS
+// ══════════════════════════════════════════════════════════════
+function setMode(m){
+  S.coordMode=m;
+  document.getElementById('inputEGSA').style.display=m==='egsa'?'':'none';
+  document.getElementById('inputWGS').style.display=m==='wgs'?'':'none';
+  document.getElementById('btnEGSA').classList.toggle('active',m==='egsa');
+  document.getElementById('btnWGS').classList.toggle('active',m==='wgs');
+}
+function togglePanel(){
+  S.panelOpen=!S.panelOpen;
+  document.getElementById('bottomPanel').classList.toggle('collapsed',!S.panelOpen);
+}
+let toastTimer=null;
+function toast(msg,err=false){
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.className='show'+(err?' err':'');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.className='',2800);
+}
+
+// ══════════════════════════════════════════════════════════════
+// BOOT
+// ══════════════════════════════════════════════════════════════
+window.addEventListener('DOMContentLoaded',()=>{
+  bootLibs();
+  window.addEventListener('resize',()=>{
+    if(S.viewMode==='plan'){
+      const cv=document.getElementById('planCanvas');
+      cv.width=cv.offsetWidth;cv.height=cv.offsetHeight;
+      drawPlan();
+    }
+  });
+});
+</script>
+</body>
+</html>
